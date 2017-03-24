@@ -15,7 +15,7 @@ import (
 	iconn "github.com/libp2p/go-libp2p-interface-conn"
 	ipnet "github.com/libp2p/go-libp2p-interface-pnet"
 	peer "github.com/libp2p/go-libp2p-peer"
-	transport "github.com/libp2p/go-libp2p-transport"
+	tpt "github.com/libp2p/go-libp2p-transport"
 	filter "github.com/libp2p/go-maddr-filter"
 	ma "github.com/multiformats/go-multiaddr"
 	msmux "github.com/multiformats/go-multistream"
@@ -32,11 +32,11 @@ var (
 )
 
 // ConnWrapper is any function that wraps a raw multiaddr connection
-type ConnWrapper func(transport.Conn) transport.Conn
+type ConnWrapper func(tpt.Conn) tpt.Conn
 
 // listener is an object that can accept connections. It implements Listener
 type listener struct {
-	transport.Listener
+	tpt.Listener
 
 	local  peer.ID    // LocalPeer is the identity of the local Peer
 	privk  ic.PrivKey // private key to use to initialize secure conns
@@ -75,13 +75,13 @@ func (l *listener) SetAddrFilters(fs *filter.Filters) {
 }
 
 type connErr struct {
-	conn transport.Conn
+	conn tpt.Conn
 	err  error
 }
 
 // Accept waits for and returns the next connection to the listener.
 // Note that unfortunately this
-func (l *listener) Accept() (transport.Conn, error) {
+func (l *listener) Accept() (tpt.Conn, error) {
 	for con := range l.incoming {
 		if con.err != nil {
 			return nil, con.err
@@ -199,12 +199,12 @@ func (l *listener) handleIncoming() {
 	}
 }
 
-func WrapTransportListener(ctx context.Context, ml transport.Listener, local peer.ID,
+func WrapTransportListener(ctx context.Context, ml tpt.Listener, local peer.ID,
 	sk ic.PrivKey) (iconn.Listener, error) {
 	return WrapTransportListenerWithProtector(ctx, ml, local, sk, nil)
 }
 
-func WrapTransportListenerWithProtector(ctx context.Context, ml transport.Listener, local peer.ID,
+func WrapTransportListenerWithProtector(ctx context.Context, ml tpt.Listener, local peer.ID,
 	sk ic.PrivKey, protec ipnet.Protector) (iconn.Listener, error) {
 
 	if protec == nil && ipnet.ForcePrivateNetwork {

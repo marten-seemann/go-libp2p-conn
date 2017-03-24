@@ -13,13 +13,13 @@ import (
 	ipnet "github.com/libp2p/go-libp2p-interface-pnet"
 	lgbl "github.com/libp2p/go-libp2p-loggables"
 	peer "github.com/libp2p/go-libp2p-peer"
-	transport "github.com/libp2p/go-libp2p-transport"
+	tpt "github.com/libp2p/go-libp2p-transport"
 	ma "github.com/multiformats/go-multiaddr"
 	manet "github.com/multiformats/go-multiaddr-net"
 	msmux "github.com/multiformats/go-multistream"
 )
 
-type WrapFunc func(transport.Conn) transport.Conn
+type WrapFunc func(tpt.Conn) tpt.Conn
 
 // Dialer is an object that can open connections. We could have a "convenience"
 // Dial function as before, but it would have many arguments, as dialing is
@@ -33,7 +33,7 @@ type Dialer struct {
 
 	// Dialers are the sub-dialers usable by this dialer
 	// selected in order based on the address being dialed
-	Dialers []transport.Dialer
+	Dialers []tpt.Dialer
 
 	// PrivateKey used to initialize a secure connection.
 	// Warning: if PrivateKey is nil, connection will not be secured.
@@ -47,7 +47,7 @@ type Dialer struct {
 	// Wrapper to wrap the raw connection (optional)
 	Wrapper WrapFunc
 
-	fallback transport.Dialer
+	fallback tpt.Dialer
 }
 
 func NewDialer(p peer.ID, pk ci.PrivKey, wrap WrapFunc) *Dialer {
@@ -55,7 +55,7 @@ func NewDialer(p peer.ID, pk ci.PrivKey, wrap WrapFunc) *Dialer {
 		LocalPeer:  p,
 		PrivateKey: pk,
 		Wrapper:    wrap,
-		fallback:   new(transport.FallbackDialer),
+		fallback:   new(tpt.FallbackDialer),
 	}
 }
 
@@ -169,12 +169,12 @@ func (d *Dialer) Dial(ctx context.Context, raddr ma.Multiaddr, remote peer.ID) (
 	return connOut, nil
 }
 
-func (d *Dialer) AddDialer(pd transport.Dialer) {
+func (d *Dialer) AddDialer(pd tpt.Dialer) {
 	d.Dialers = append(d.Dialers, pd)
 }
 
 // returns dialer that can dial the given address
-func (d *Dialer) subDialerForAddr(raddr ma.Multiaddr) transport.Dialer {
+func (d *Dialer) subDialerForAddr(raddr ma.Multiaddr) tpt.Dialer {
 	for _, pd := range d.Dialers {
 		if pd.Matches(raddr) {
 			return pd
@@ -189,7 +189,7 @@ func (d *Dialer) subDialerForAddr(raddr ma.Multiaddr) transport.Dialer {
 }
 
 // rawConnDial dials the underlying net.Conn + manet.Conns
-func (d *Dialer) rawConnDial(ctx context.Context, raddr ma.Multiaddr, remote peer.ID) (transport.Conn, error) {
+func (d *Dialer) rawConnDial(ctx context.Context, raddr ma.Multiaddr, remote peer.ID) (tpt.Conn, error) {
 	if strings.HasPrefix(raddr.String(), "/ip4/0.0.0.0") {
 		log.Event(ctx, "connDialZeroAddr", lgbl.Dial("conn", d.LocalPeer, remote, nil, raddr))
 		return nil, fmt.Errorf("Attempted to connect to zero address: %s", raddr)
