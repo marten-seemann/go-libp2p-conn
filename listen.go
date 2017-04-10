@@ -17,6 +17,7 @@ import (
 	peer "github.com/libp2p/go-libp2p-peer"
 	tpt "github.com/libp2p/go-libp2p-transport"
 	filter "github.com/libp2p/go-maddr-filter"
+	smux "github.com/libp2p/go-stream-muxer"
 	ma "github.com/multiformats/go-multiaddr"
 	msmux "github.com/multiformats/go-multistream"
 )
@@ -42,6 +43,8 @@ type listener struct {
 	privk  ic.PrivKey // private key to use to initialize secure conns
 	protec ipnet.Protector
 
+	streamMuxer smux.Transport
+
 	filters *filter.Filters
 
 	wrapper ConnWrapper
@@ -51,10 +54,12 @@ type listener struct {
 
 	mux *msmux.MultistreamMuxer
 
-	incoming chan connErr
+	incoming chan connOrErr
 
 	ctx context.Context
 }
+
+var _ iconn.Listener = &listener{}
 
 func (l *listener) teardown() error {
 	defer log.Debugf("listener closed: %s %s", l.local, l.Multiaddr())
@@ -74,39 +79,30 @@ func (l *listener) SetAddrFilters(fs *filter.Filters) {
 	l.filters = fs
 }
 
-type connErr struct {
+type connOrErr struct {
 	conn tpt.Conn
 	err  error
 }
 
 // Accept waits for and returns the next connection to the listener.
-// Note that unfortunately this
-func (l *listener) Accept() (tpt.Conn, error) {
+func (l *listener) Accept() (iconn.Conn, error) {
 	for con := range l.incoming {
 		if con.err != nil {
 			return nil, con.err
 		}
-
-		c, err := newSingleConn(l.ctx, l.local, "", con.conn)
-		if err != nil {
-			con.conn.Close()
-			if l.catcher.IsTemporary(err) {
-				continue
-			}
-			return nil, err
-		}
+		tptConn := con.conn
 
 		if l.privk == nil || !iconn.EncryptConnections {
-			log.Warning("listener %s listening INSECURELY!", l)
-			return c, nil
+			log.Warningf("listener %s listening INSECURELY!", l)
 		}
-		sc, err := newSecureConn(l.ctx, l.privk, c)
+
+		c, err := newSingleConn(l.ctx, l.local, "", l.privk, tptConn, l.streamMuxer, true)
 		if err != nil {
-			con.conn.Close()
-			log.Infof("ignoring conn we failed to secure: %s %s", err, c)
+			tptConn.Close()
 			continue
 		}
-		return sc, nil
+
+		return c, nil
 	}
 	return nil, fmt.Errorf("listener is closed")
 }
@@ -149,64 +145,79 @@ func (l *listener) handleIncoming() {
 	defer wg.Done()
 
 	for {
-		maconn, err := l.Listener.Accept()
+		conn, err := l.Listener.Accept()
 		if err != nil {
 			if l.catcher.IsTemporary(err) {
 				continue
 			}
 
-			l.incoming <- connErr{err: err}
+			l.incoming <- connOrErr{err: err}
 			return
 		}
 
-		log.Debugf("listener %s got connection: %s <---> %s", l, maconn.LocalMultiaddr(), maconn.RemoteMultiaddr())
+		log.Debugf("listener %s got connection: %s <---> %s", l, conn.LocalMultiaddr(), conn.RemoteMultiaddr())
 
-		if l.filters != nil && l.filters.AddrBlocked(maconn.RemoteMultiaddr()) {
-			log.Debugf("blocked connection from %s", maconn.RemoteMultiaddr())
-			maconn.Close()
+		if l.filters != nil && l.filters.AddrBlocked(conn.RemoteMultiaddr()) {
+			log.Debugf("blocked connection from %s", conn.RemoteMultiaddr())
+			conn.Close()
 			continue
-		}
-		// If we have a wrapper func, wrap this conn
-		if l.wrapper != nil {
-			maconn = l.wrapper(maconn)
 		}
 
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			if l.protec != nil {
-				pc, err := l.protec.Protect(maconn)
+				pc, err := l.protec.Protect(conn)
 				if err != nil {
-					maconn.Close()
+					conn.Close()
 					log.Warning("protector failed: ", err)
+					return
 				}
-				maconn = pc
+				conn = pc
 			}
 
-			maconn.SetReadDeadline(time.Now().Add(NegotiateReadTimeout))
-			_, _, err = l.mux.Negotiate(maconn)
+			// If we have a wrapper func, wrap this conn
+			if l.wrapper != nil {
+				conn = l.wrapper(conn)
+			}
+
+			var stream timeoutReadWriteCloser
+			switch conn := conn.(type) {
+			case tpt.SingleStreamConn:
+				stream = conn
+			case tpt.MultiStreamConn:
+				stream, err = conn.AcceptStream()
+				if err != nil {
+					conn.Close()
+					log.Warning("accepting stream failed: ", err)
+					return
+				}
+				defer stream.Close()
+			}
+
+			// TODO: should the negotiate timeout include the time taken by AcceptStream?
+			stream.SetReadDeadline(time.Now().Add(NegotiateReadTimeout))
+			_, _, err = l.mux.Negotiate(stream)
 			if err != nil {
 				log.Warning("incoming conn: negotiation of crypto protocol failed: ", err)
-				maconn.Close()
+				conn.Close()
 				return
 			}
-
 			// clear read readline
-			maconn.SetReadDeadline(time.Time{})
+			stream.SetReadDeadline(time.Time{})
 
-			l.incoming <- connErr{conn: maconn}
+			l.incoming <- connOrErr{conn: conn}
 		}()
 	}
 }
 
-func WrapTransportListener(ctx context.Context, ml tpt.Listener, local peer.ID,
+func WrapTransportListener(ctx context.Context, ml tpt.Listener, local peer.ID, pstpt smux.Transport,
 	sk ic.PrivKey) (iconn.Listener, error) {
-	return WrapTransportListenerWithProtector(ctx, ml, local, sk, nil)
+	return WrapTransportListenerWithProtector(ctx, ml, local, sk, pstpt, nil)
 }
 
 func WrapTransportListenerWithProtector(ctx context.Context, ml tpt.Listener, local peer.ID,
-	sk ic.PrivKey, protec ipnet.Protector) (iconn.Listener, error) {
-
+	sk ic.PrivKey, pstpt smux.Transport, protec ipnet.Protector) (iconn.Listener, error) {
 	if protec == nil && ipnet.ForcePrivateNetwork {
 		log.Error("tried to listen with no Private Network Protector but usage" +
 			" of Private Networks is forced by the enviroment")
@@ -214,13 +225,14 @@ func WrapTransportListenerWithProtector(ctx context.Context, ml tpt.Listener, lo
 	}
 
 	l := &listener{
-		Listener: ml,
-		local:    local,
-		privk:    sk,
-		protec:   protec,
-		mux:      msmux.NewMultistreamMuxer(),
-		incoming: make(chan connErr, connAcceptBuffer),
-		ctx:      ctx,
+		Listener:    ml,
+		local:       local,
+		privk:       sk,
+		protec:      protec,
+		mux:         msmux.NewMultistreamMuxer(),
+		incoming:    make(chan connOrErr, connAcceptBuffer),
+		ctx:         ctx,
+		streamMuxer: pstpt,
 	}
 	l.proc = goprocessctx.WithContextAndTeardown(ctx, l.teardown)
 	l.catcher.IsTemp = func(e error) bool {
