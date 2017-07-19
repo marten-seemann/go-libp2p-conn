@@ -180,10 +180,6 @@ func (c *singleConn) OpenStream() (smux.Stream, error) {
 	return c.streamConn.OpenStream()
 }
 
-func (c *singleConn) Serve(s smux.StreamHandler) {
-	c.streamConn.Serve(s)
-}
-
 func (c *singleConn) IsClosed() bool {
 	return c.streamConn.IsClosed()
 }
