@@ -6,7 +6,11 @@ covertools:
 	go get github.com/mattn/goveralls
 	go get golang.org/x/tools/cmd/cover
 
-deps: gx covertools
+ginkgo:
+	go get github.com/onsi/ginkgo/ginkgo
+	go get github.com/onsi/gomega
+
+deps: gx covertools ginkgo
 	gx --verbose install --global
 	gx-go rewrite
 
