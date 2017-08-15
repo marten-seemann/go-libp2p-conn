@@ -3,11 +3,9 @@ package conn
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"strings"
 	"time"
 
-	addrutil "github.com/libp2p/go-addr-util"
 	ci "github.com/libp2p/go-libp2p-crypto"
 	iconn "github.com/libp2p/go-libp2p-interface-conn"
 	ipnet "github.com/libp2p/go-libp2p-interface-pnet"
@@ -15,7 +13,6 @@ import (
 	peer "github.com/libp2p/go-libp2p-peer"
 	tpt "github.com/libp2p/go-libp2p-transport"
 	ma "github.com/multiformats/go-multiaddr"
-	manet "github.com/multiformats/go-multiaddr-net"
 	msmux "github.com/multiformats/go-multistream"
 )
 
@@ -201,67 +198,4 @@ func (d *Dialer) rawConnDial(ctx context.Context, raddr ma.Multiaddr, remote pee
 	}
 
 	return sd.DialContext(ctx, raddr)
-}
-
-func pickLocalAddr(laddrs []ma.Multiaddr, raddr ma.Multiaddr) (laddr ma.Multiaddr) {
-	if len(laddrs) < 1 {
-		return nil
-	}
-
-	// make sure that we ONLY use local addrs that match the remote addr.
-	laddrs = manet.AddrMatch(raddr, laddrs)
-	if len(laddrs) < 1 {
-		return nil
-	}
-
-	// make sure that we ONLY use local addrs that CAN dial the remote addr.
-	// filter out all the local addrs that aren't capable
-	raddrIPLayer := ma.Split(raddr)[0]
-	raddrIsLoopback := manet.IsIPLoopback(raddrIPLayer)
-	raddrIsLinkLocal := manet.IsIP6LinkLocal(raddrIPLayer)
-	laddrs = addrutil.FilterAddrs(laddrs, func(a ma.Multiaddr) bool {
-		laddrIPLayer := ma.Split(a)[0]
-		laddrIsLoopback := manet.IsIPLoopback(laddrIPLayer)
-		laddrIsLinkLocal := manet.IsIP6LinkLocal(laddrIPLayer)
-		if laddrIsLoopback { // our loopback addrs can only dial loopbacks.
-			return raddrIsLoopback
-		}
-		if laddrIsLinkLocal {
-			return raddrIsLinkLocal // out linklocal addrs can only dial link locals.
-		}
-		return true
-	})
-
-	// TODO pick with a good heuristic
-	// we use a random one for now to prevent bad addresses from making nodes unreachable
-	// with a random selection, multiple tries may work.
-	return laddrs[rand.Intn(len(laddrs))]
-}
-
-// MultiaddrProtocolsMatch returns whether two multiaddrs match in protocol stacks.
-func MultiaddrProtocolsMatch(a, b ma.Multiaddr) bool {
-	ap := a.Protocols()
-	bp := b.Protocols()
-
-	if len(ap) != len(bp) {
-		return false
-	}
-
-	for i, api := range ap {
-		if api.Code != bp[i].Code {
-			return false
-		}
-	}
-
-	return true
-}
-
-// MultiaddrNetMatch returns the first Multiaddr found to match  network.
-func MultiaddrNetMatch(tgt ma.Multiaddr, srcs []ma.Multiaddr) ma.Multiaddr {
-	for _, a := range srcs {
-		if MultiaddrProtocolsMatch(tgt, a) {
-			return a
-		}
-	}
-	return nil
 }

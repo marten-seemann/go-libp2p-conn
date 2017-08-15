@@ -7,7 +7,6 @@ import (
 	"time"
 
 	logging "github.com/ipfs/go-log"
-	mpool "github.com/jbenet/go-msgio/mpool"
 	ic "github.com/libp2p/go-libp2p-crypto"
 	iconn "github.com/libp2p/go-libp2p-interface-conn"
 	lgbl "github.com/libp2p/go-libp2p-loggables"
@@ -17,13 +16,6 @@ import (
 )
 
 var log = logging.Logger("conn")
-
-// ReleaseBuffer puts the given byte array back into the buffer pool,
-// first verifying that it is the correct size
-func ReleaseBuffer(b []byte) {
-	log.Debugf("Releasing buffer! (cap,size = %d, %d)", cap(b), len(b))
-	mpool.ByteSlicePool.Put(uint32(cap(b)), b)
-}
 
 // singleConn represents a single connection to another Peer (IPFS Node).
 type singleConn struct {
