@@ -112,9 +112,9 @@ var _ = Describe("Connections", func() {
 				ctx, cancel := context.WithCancel(context.Background())
 				defer cancel()
 
-				old := NegotiateReadTimeout
-				NegotiateReadTimeout = 3 * time.Second
-				defer func() { NegotiateReadTimeout = old }()
+				old := ConnAcceptTimeout
+				ConnAcceptTimeout = 3 * time.Second
+				defer func() { ConnAcceptTimeout = old }()
 
 				p1 := randPeerNetParams(tr)
 				p2 := randPeerNetParams(tr)
@@ -168,12 +168,12 @@ var _ = Describe("Connections", func() {
 					Expect(err).ToNot(HaveOccurred())
 				}
 				close(accepted)
-				Expect(time.Now()).To(BeTemporally("<", before.Add(NegotiateReadTimeout/4)))
+				Expect(time.Now()).To(BeTemporally("<", before.Add(ConnAcceptTimeout/4)))
 				Eventually(func() bool {
 					wg.Wait() // wait for the timeouts for the raw connections to occur
 					return true
-				}, NegotiateReadTimeout).Should(BeTrue())
-				Expect(time.Now()).To(BeTemporally(">", before.Add(NegotiateReadTimeout)))
+				}, ConnAcceptTimeout).Should(BeTrue())
+				Expect(time.Now()).To(BeTemporally(">", before.Add(ConnAcceptTimeout)))
 
 				// make sure we can dial in still after a bunch of timeouts
 				done := make(chan struct{})

@@ -2,6 +2,7 @@ package conn
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -28,8 +29,8 @@ const (
 )
 
 var (
-	connAcceptBuffer     = 32
-	NegotiateReadTimeout = time.Second * 60
+	connAcceptBuffer  = 32
+	ConnAcceptTimeout = 60 * time.Second
 )
 
 // ConnWrapper is any function that wraps a raw multiaddr connection
@@ -80,31 +81,23 @@ func (l *listener) SetAddrFilters(fs *filter.Filters) {
 }
 
 type connOrErr struct {
-	conn tpt.Conn
+	conn iconn.Conn
 	err  error
 }
 
 // Accept waits for and returns the next connection to the listener.
 func (l *listener) Accept() (iconn.Conn, error) {
-	for con := range l.incoming {
-		if con.err != nil {
-			return nil, con.err
-		}
-		tptConn := con.conn
-
-		if l.privk == nil || !iconn.EncryptConnections {
-			log.Warningf("listener %s listening INSECURELY!", l)
-		}
-
-		c, err := newSingleConn(l.ctx, l.local, "", l.privk, tptConn, l.streamMuxer, true)
-		if err != nil {
-			tptConn.Close()
-			continue
-		}
-
-		return c, nil
+	if l.privk == nil || !iconn.EncryptConnections {
+		log.Warningf("listener %s listening INSECURELY!", l)
 	}
-	return nil, fmt.Errorf("listener is closed")
+
+	for c := range l.incoming {
+		if c.err != nil {
+			return nil, c.err
+		}
+		return c.conn, nil
+	}
+	return nil, errors.New("listener is closed")
 }
 
 func (l *listener) Addr() net.Addr {
@@ -150,12 +143,9 @@ func (l *listener) handleIncoming() {
 			if l.catcher.IsTemporary(err) {
 				continue
 			}
-
 			l.incoming <- connOrErr{err: err}
 			return
 		}
-
-		log.Debugf("listener %s got connection: %s <---> %s", l, conn.LocalMultiaddr(), conn.RemoteMultiaddr())
 
 		if l.filters != nil && l.filters.AddrBlocked(conn.RemoteMultiaddr()) {
 			log.Debugf("blocked connection from %s", conn.RemoteMultiaddr())
@@ -163,50 +153,71 @@ func (l *listener) handleIncoming() {
 			continue
 		}
 
+		log.Debugf("listener %s got connection: %s <---> %s", l, conn.LocalMultiaddr(), conn.RemoteMultiaddr())
+
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if l.protec != nil {
-				pc, err := l.protec.Protect(conn)
-				if err != nil {
+
+			ctx, cancel := context.WithTimeout(l.ctx, ConnAcceptTimeout)
+			defer cancel()
+
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+
+				if l.protec != nil {
+					pc, err := l.protec.Protect(conn)
+					if err != nil {
+						conn.Close()
+						log.Warning("protector failed: ", err)
+						return
+					}
+					conn = pc
+				}
+
+				// If we have a wrapper func, wrap this conn
+				if l.wrapper != nil {
+					conn = l.wrapper(conn)
+				}
+
+				var stream io.ReadWriteCloser
+				switch conn := conn.(type) {
+				case tpt.SingleStreamConn:
+					stream = conn
+				case tpt.MultiStreamConn:
+					stream, err = conn.AcceptStream()
+					if err != nil {
+						conn.Close()
+						log.Warning("accepting stream failed: ", err)
+						return
+					}
+					defer stream.Close()
+				}
+
+				if _, _, err := l.mux.Negotiate(stream); err != nil {
+					log.Warning("incoming conn: negotiation of crypto protocol failed: ", err)
 					conn.Close()
-					log.Warning("protector failed: ", err)
 					return
 				}
-				conn = pc
-			}
 
-			// If we have a wrapper func, wrap this conn
-			if l.wrapper != nil {
-				conn = l.wrapper(conn)
-			}
-
-			var stream timeoutReadWriteCloser
-			switch conn := conn.(type) {
-			case tpt.SingleStreamConn:
-				stream = conn
-			case tpt.MultiStreamConn:
-				stream, err = conn.AcceptStream()
+				c, err := newSingleConn(ctx, l.local, "", l.privk, conn, l.streamMuxer, true)
 				if err != nil {
+					log.Warning("connection setup failed: ", err)
 					conn.Close()
-					log.Warning("accepting stream failed: ", err)
 					return
 				}
-				defer stream.Close()
-			}
 
-			// TODO: should the negotiate timeout include the time taken by AcceptStream?
-			stream.SetReadDeadline(time.Now().Add(NegotiateReadTimeout))
-			_, _, err = l.mux.Negotiate(stream)
-			if err != nil {
-				log.Warning("incoming conn: negotiation of crypto protocol failed: ", err)
+				l.incoming <- connOrErr{conn: c}
+			}()
+
+			select {
+			case <-ctx.Done():
+				log.Warning("incoming conn: conn not established in time:", ctx.Err().Error())
 				conn.Close()
 				return
+			case <-done: // connection completed (or errored)
 			}
-			// clear read readline
-			stream.SetReadDeadline(time.Time{})
-
-			l.incoming <- connOrErr{conn: conn}
 		}()
 	}
 }

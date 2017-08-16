@@ -18,14 +18,21 @@ import (
 	msmux "github.com/multiformats/go-multistream"
 )
 
-type WrapFunc func(tpt.Conn) tpt.Conn
+// DialTimeout is the maximum duration a Dial is allowed to take.
+// This includes the time between dialing the raw network connection,
+// protocol selection as well the handshake, if applicable.
+var DialTimeout = 60 * time.Second
 
-type timeoutReadWriteCloser interface {
-	io.ReadWriteCloser
-	SetDeadline(time.Time) error
-	SetReadDeadline(time.Time) error
-	SetWriteDeadline(time.Time) error
-}
+// dialTimeoutErr occurs when the DialTimeout is exceeded.
+type dialTimeoutErr struct{}
+
+func (dialTimeoutErr) Error() string   { return "deadline exceeded" }
+func (dialTimeoutErr) Temporary() bool { return true }
+func (dialTimeoutErr) Timeout() bool   { return true }
+
+// The WrapFunc is used to wrap a tpt.Conn.
+// It must not block.
+type WrapFunc func(tpt.Conn) tpt.Conn
 
 // Dialer is an object that can open connections. We could have a "convenience"
 // Dial function as before, but it would have many arguments, as dialing is
@@ -78,10 +85,9 @@ func (d *Dialer) String() string {
 // Example: d.DialAddr(ctx, peer.Addresses()[0], peer)
 func (d *Dialer) Dial(ctx context.Context, raddr ma.Multiaddr, remote peer.ID) (iconn.Conn, error) {
 	logdial := lgbl.Dial("conn", d.LocalPeer, remote, nil, raddr)
+	defer log.EventBegin(ctx, "connDial", logdial).Done()
 	logdial["encrypted"] = (d.PrivateKey != nil) // log wether this will be an encrypted dial or not.
 	logdial["inPrivNet"] = (d.Protector != nil)
-
-	defer log.EventBegin(ctx, "connDial", logdial).Done()
 
 	if d.Protector == nil && ipnet.ForcePrivateNetwork {
 		log.Error("tried to dial with no Private Network Protector but usage" +
@@ -89,38 +95,37 @@ func (d *Dialer) Dial(ctx context.Context, raddr ma.Multiaddr, remote peer.ID) (
 		return nil, ipnet.ErrNotInPrivateNetwork
 	}
 
-	var connOut iconn.Conn
-	var errOut error
-	done := make(chan struct{})
+	c, err := d.doDial(ctx, raddr, remote)
+	if err != nil {
+		logdial["error"] = err.Error()
+		logdial["dial"] = "failure"
+		return nil, err
+	}
+	logdial["dial"] = "success"
+	return c, nil
+}
 
-	// do it async to ensure we respect done context
+func (d *Dialer) doDial(ctx context.Context, raddr ma.Multiaddr, remote peer.ID) (iconn.Conn, error) {
+	rawConn, err := d.rawConnDial(ctx, raddr, remote)
+	if err != nil {
+		return nil, err
+	}
+
+	done := make(chan connOrErr, 1)
+	// do it async to ensure we respect the context
 	go func() {
-		defer func() {
-			select {
-			case done <- struct{}{}:
-			case <-ctx.Done():
-			}
-		}()
-
-		tptConn, err := d.rawConnDial(ctx, raddr, remote)
-		if err != nil {
-			errOut = err
-			return
-		}
-
 		if d.Protector != nil {
 			var pconn tpt.Conn
-			pconn, err = d.Protector.Protect(tptConn)
+			pconn, err = d.Protector.Protect(rawConn)
 			if err != nil {
-				tptConn.Close()
-				errOut = err
+				done <- connOrErr{err: err}
 				return
 			}
-			tptConn = pconn
+			rawConn = pconn
 		}
 
 		if d.Wrapper != nil {
-			tptConn = d.Wrapper(tptConn)
+			rawConn = d.Wrapper(rawConn)
 		}
 
 		cryptoProtoChoice := SecioTag
@@ -128,56 +133,48 @@ func (d *Dialer) Dial(ctx context.Context, raddr ma.Multiaddr, remote peer.ID) (
 			cryptoProtoChoice = NoEncryptionTag
 		}
 
-		var stream timeoutReadWriteCloser
-		switch con := tptConn.(type) {
+		var stream io.ReadWriteCloser
+		switch con := rawConn.(type) {
 		case tpt.SingleStreamConn:
 			stream = con
 		case tpt.MultiStreamConn:
 			stream, err = con.OpenStream()
 			if err != nil {
-				errOut = err
+				done <- connOrErr{err: err}
 				return
 			}
 			defer stream.Close()
 		}
 
-		stream.SetReadDeadline(time.Now().Add(NegotiateReadTimeout))
-		err = msmux.SelectProtoOrFail(cryptoProtoChoice, stream)
-		if err != nil {
-			errOut = err
+		if err := msmux.SelectProtoOrFail(cryptoProtoChoice, stream); err != nil {
+			done <- connOrErr{err: err}
 			return
 		}
 
-		// clear deadline
-		stream.SetReadDeadline(time.Time{})
-
-		c, err := newSingleConn(ctx, d.LocalPeer, remote, d.PrivateKey, tptConn, d.streamMuxer, false)
+		c, err := newSingleConn(ctx, d.LocalPeer, remote, d.PrivateKey, rawConn, d.streamMuxer, false)
 		if err != nil {
-			tptConn.Close()
-			errOut = err
+			done <- connOrErr{err: err}
 			return
 		}
 
-		connOut = c
+		done <- connOrErr{conn: c}
 	}()
 
+	var res connOrErr
 	select {
 	case <-ctx.Done():
-		logdial["error"] = ctx.Err().Error()
-		logdial["dial"] = "failure"
+		rawConn.Close()
 		return nil, ctx.Err()
-	case <-done:
-		// whew, finished.
+	case <-time.After(DialTimeout):
+		rawConn.Close()
+		return nil, &dialTimeoutErr{}
+	case res = <-done:
+		if res.err != nil {
+			rawConn.Close()
+		}
 	}
 
-	if errOut != nil {
-		logdial["error"] = errOut.Error()
-		logdial["dial"] = "failure"
-		return nil, errOut
-	}
-
-	logdial["dial"] = "success"
-	return connOut, nil
+	return res.conn, res.err
 }
 
 func (d *Dialer) AddDialer(pd tpt.Dialer) {
