@@ -20,7 +20,7 @@ var _ = Describe("Connections", func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		p1 := randPeerNetParams(singleStreamTransport)
+		p1 := randPeerNetParams(duplexTransport)
 		l1 := getListener(ctx, p1)
 		defer l1.Close()
 		go l1.Accept()
@@ -135,11 +135,11 @@ var _ = Describe("Connections", func() {
 						c := dialRawConn(p2.Addr, l1.Multiaddr())
 						defer c.Close()
 						switch tr {
-						case singleStreamTransport:
-							conn = c.(tpt.SingleStreamConn)
-						case multiStreamTransport:
+						case duplexTransport:
+							conn = c.(tpt.DuplexConn)
+						case multiplexTransport:
 							var err error
-							conn, err = c.(tpt.MultiStreamConn).OpenStream()
+							conn, err = c.(tpt.MultiplexConn).OpenStream()
 							Expect(err).ToNot(HaveOccurred())
 						}
 						// hang this connection until timeout

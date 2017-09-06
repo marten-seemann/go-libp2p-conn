@@ -13,7 +13,7 @@ import (
 
 var _ = Describe("dialing", func() {
 	It("errors when it can't dial the raw connection", func() {
-		p := randPeerNetParams(singleStreamTransport)
+		p := randPeerNetParams(duplexTransport)
 		d := getDialer(p.ID, p.PrivKey, p.Addr)
 		raddr, err := ma.NewMultiaddr("/ip4/1.2.3.4/tcp/0")
 		Expect(err).ToNot(HaveOccurred())

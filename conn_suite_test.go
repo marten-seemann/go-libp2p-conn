@@ -43,17 +43,17 @@ var streamMuxer = yamux.DefaultTransport
 type transportType uint8
 
 const (
-	singleStreamTransport transportType = 1 + iota
-	multiStreamTransport
+	duplexTransport transportType = 1 + iota
+	multiplexTransport
 )
 
-var transportTypes = []transportType{singleStreamTransport}
+var transportTypes = []transportType{duplexTransport}
 
 func (t transportType) String() string {
-	if t == multiStreamTransport {
-		return "multi-stream transport"
+	if t == duplexTransport {
+		return "duplex transport"
 	}
-	return "single-stream transport"
+	return "multiplex transport"
 }
 
 // dialRawConn dials a tpt.Conn
@@ -107,7 +107,7 @@ func getDialer(localPeer peer.ID, privKey ci.PrivKey, addr ma.Multiaddr) *Dialer
 func randPeerNetParams(tr transportType) *tu.PeerNetParams {
 	p, err := tu.RandPeerNetParams()
 	Expect(err).ToNot(HaveOccurred())
-	if tr == multiStreamTransport {
+	if tr == multiplexTransport {
 		p.Addr, err = ma.NewMultiaddr("/ip4/127.0.0.1/udp/0/quic")
 		Expect(err).ToNot(HaveOccurred())
 	}

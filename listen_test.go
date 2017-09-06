@@ -68,11 +68,11 @@ var _ = Describe("Listener", func() {
 						defer c.Close()
 						var conn io.ReadWriteCloser
 						switch tr {
-						case singleStreamTransport:
-							conn = c.(tpt.SingleStreamConn)
-						case multiStreamTransport:
+						case duplexTransport:
+							conn = c.(tpt.DuplexConn)
+						case multiplexTransport:
 							var err error
-							conn, err = c.(tpt.MultiStreamConn).OpenStream()
+							conn, err = c.(tpt.MultiplexConn).OpenStream()
 							Expect(err).ToNot(HaveOccurred())
 						}
 						// write some garbage. This will fail the protocol selection

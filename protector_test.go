@@ -16,69 +16,69 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-type fakeSingleStreamProtector struct {
+type fakeDuplexProtector struct {
 	used bool
 }
 
-func (f *fakeSingleStreamProtector) Fingerprint() []byte {
+func (f *fakeDuplexProtector) Fingerprint() []byte {
 	return make([]byte, 32)
 }
 
-func (f *fakeSingleStreamProtector) Protect(c tpt.Conn) (tpt.Conn, error) {
+func (f *fakeDuplexProtector) Protect(c tpt.Conn) (tpt.Conn, error) {
 	f.used = true
-	return &rot13CryptSingleStream{c.(tpt.SingleStreamConn)}, nil
+	return &rot13CryptDuplex{c.(tpt.DuplexConn)}, nil
 }
 
-type rot13CryptSingleStream struct {
-	tpt.SingleStreamConn
+type rot13CryptDuplex struct {
+	tpt.DuplexConn
 }
 
-func (r *rot13CryptSingleStream) Read(b []byte) (int, error) {
-	n, err := r.SingleStreamConn.Read(b)
+func (r *rot13CryptDuplex) Read(b []byte) (int, error) {
+	n, err := r.DuplexConn.Read(b)
 	for i := 0; i < n; i++ {
 		b[i] = b[i] - 13
 	}
 	return n, err
 }
 
-func (r *rot13CryptSingleStream) Write(b []byte) (int, error) {
+func (r *rot13CryptDuplex) Write(b []byte) (int, error) {
 	p := make([]byte, len(b)) // write MUST NOT modify b
 	for i := range b {
 		p[i] = b[i] + 13
 	}
-	return r.SingleStreamConn.Write(p)
+	return r.DuplexConn.Write(p)
 }
 
-type fakeMultiStreamProtector struct {
+type fakeMultiplexProtector struct {
 	used  bool
-	crypt *rot13CryptMultiStream
+	crypt *rot13CryptMultiplex
 }
 
-func (f *fakeMultiStreamProtector) Fingerprint() []byte {
+func (f *fakeMultiplexProtector) Fingerprint() []byte {
 	return make([]byte, 32)
 }
 
-func (f *fakeMultiStreamProtector) Protect(c tpt.Conn) (tpt.Conn, error) {
+func (f *fakeMultiplexProtector) Protect(c tpt.Conn) (tpt.Conn, error) {
 	f.used = true
-	f.crypt = &rot13CryptMultiStream{c.(tpt.MultiStreamConn), 0, 0}
+	f.crypt = &rot13CryptMultiplex{c.(tpt.MultiplexConn), 0, 0}
 	return f.crypt, nil
 }
 
-type rot13CryptMultiStream struct {
-	tpt.MultiStreamConn
+type rot13CryptMultiplex struct {
+	tpt.MultiplexConn
 	openedStreams   int
 	acceptedStreams int
 }
 
-func (r *rot13CryptMultiStream) OpenStream() (smux.Stream, error) {
+func (r *rot13CryptMultiplex) OpenStream() (smux.Stream, error) {
 	r.openedStreams++
-	str, err := r.MultiStreamConn.OpenStream()
+	str, err := r.MultiplexConn.OpenStream()
 	return &rot13Stream{str}, err
 }
 
-func (r *rot13CryptMultiStream) AcceptStream() (smux.Stream, error) {
+func (r *rot13CryptMultiplex) AcceptStream() (smux.Stream, error) {
 	r.acceptedStreams++
-	str, err := r.MultiStreamConn.AcceptStream()
+	str, err := r.MultiplexConn.AcceptStream()
 	return &rot13Stream{str}, err
 }
 
@@ -119,10 +119,10 @@ var _ = Describe("using the protector", func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		p1 := randPeerNetParams(singleStreamTransport)
-		p2 := randPeerNetParams(singleStreamTransport)
-		p1Protec := &fakeSingleStreamProtector{}
-		p2Protec := &fakeSingleStreamProtector{}
+		p1 := randPeerNetParams(duplexTransport)
+		p2 := randPeerNetParams(duplexTransport)
+		p1Protec := &fakeDuplexProtector{}
+		p2Protec := &fakeDuplexProtector{}
 
 		list, err := tcpt.NewTCPTransport().Listen(p1.Addr)
 		Expect(err).ToNot(HaveOccurred())
@@ -150,15 +150,15 @@ var _ = Describe("using the protector", func() {
 		Expect(p1Protec.used).To(BeTrue())
 	})
 
-	// TODO: enable this test when adding support for multi-stream connections
-	PIt("uses a protector for multi-stream connections", func() {
+	// TODO: enable this test when adding support for multiplex connections
+	PIt("uses a protector for multiplex connections", func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		p1 := randPeerNetParams(multiStreamTransport)
-		p2 := randPeerNetParams(multiStreamTransport)
-		p1Protec := &fakeMultiStreamProtector{}
-		p2Protec := &fakeMultiStreamProtector{}
+		p1 := randPeerNetParams(multiplexTransport)
+		p2 := randPeerNetParams(multiplexTransport)
+		p1Protec := &fakeMultiplexProtector{}
+		p2Protec := &fakeMultiplexProtector{}
 
 		list, err := quict.NewQuicTransport().Listen(p1.Addr)
 		Expect(err).ToNot(HaveOccurred())
@@ -210,8 +210,8 @@ var _ = Describe("using the protector", func() {
 
 		BeforeEach(func() {
 			ipnet.ForcePrivateNetwork = true
-			p1 = randPeerNetParams(singleStreamTransport)
-			p2 = randPeerNetParams(singleStreamTransport)
+			p1 = randPeerNetParams(duplexTransport)
+			p2 = randPeerNetParams(duplexTransport)
 			var err error
 			list, err = tcpt.NewTCPTransport().Listen(p1.Addr)
 			Expect(err).ToNot(HaveOccurred())
@@ -237,8 +237,8 @@ var _ = Describe("using the protector", func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		p1 := randPeerNetParams(singleStreamTransport)
-		p2 := randPeerNetParams(singleStreamTransport)
+		p1 := randPeerNetParams(duplexTransport)
+		p2 := randPeerNetParams(duplexTransport)
 		p1Protec := &erroringProtector{}
 		p2Protec := &erroringProtector{}
 

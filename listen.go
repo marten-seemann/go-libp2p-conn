@@ -183,9 +183,9 @@ func (l *listener) handleIncoming() {
 
 				var stream io.ReadWriteCloser
 				switch conn := conn.(type) {
-				case tpt.SingleStreamConn:
+				case tpt.DuplexConn:
 					stream = conn
-				case tpt.MultiStreamConn:
+				case tpt.MultiplexConn:
 					stream, err = conn.AcceptStream()
 					if err != nil {
 						conn.Close()

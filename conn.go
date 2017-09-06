@@ -39,7 +39,7 @@ func newSingleConn(ctx context.Context, local, remote peer.ID, privKey ci.PrivKe
 	var streamConn smux.Conn
 	var secSession secio.Session
 	switch conn := tptConn.(type) {
-	case tpt.SingleStreamConn:
+	case tpt.DuplexConn:
 		c := conn
 		// 1. secure the connection
 		if privKey != nil && iconn.EncryptConnections {
@@ -49,8 +49,8 @@ func newSingleConn(ctx context.Context, local, remote peer.ID, privKey ci.PrivKe
 				return nil, err
 			}
 			c = &secureDuplexConn{
-				SingleStreamConn: conn,
-				secure:           secSession,
+				insecure: conn,
+				secure:   secSession,
 			}
 		} else {
 			log.Warning("creating INSECURE connection %s at %s", tptConn.LocalMultiaddr(), tptConn.RemoteMultiaddr())
@@ -62,7 +62,7 @@ func newSingleConn(ctx context.Context, local, remote peer.ID, privKey ci.PrivKe
 		if err != nil {
 			return nil, err
 		}
-	case tpt.MultiStreamConn:
+	case tpt.MultiplexConn:
 		panic("not implemented yet")
 	}
 

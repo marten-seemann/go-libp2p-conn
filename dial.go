@@ -135,9 +135,9 @@ func (d *Dialer) doDial(ctx context.Context, raddr ma.Multiaddr, remote peer.ID)
 
 		var stream io.ReadWriteCloser
 		switch con := rawConn.(type) {
-		case tpt.SingleStreamConn:
+		case tpt.DuplexConn:
 			stream = con
-		case tpt.MultiStreamConn:
+		case tpt.MultiplexConn:
 			stream, err = con.OpenStream()
 			if err != nil {
 				done <- connOrErr{err: err}
