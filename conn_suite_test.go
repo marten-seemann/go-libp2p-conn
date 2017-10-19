@@ -12,11 +12,9 @@ import (
 	tpt "github.com/libp2p/go-libp2p-transport"
 	tcpt "github.com/libp2p/go-tcp-transport"
 	tu "github.com/libp2p/go-testutil"
-	quict "github.com/marten-seemann/libp2p-quic-transport"
 	ma "github.com/multiformats/go-multiaddr"
 	yamux "github.com/whyrusleeping/go-smux-yamux"
 	grc "github.com/whyrusleeping/gorocheck"
-	"github.com/whyrusleeping/mafmt"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -40,35 +38,11 @@ var _ = AfterEach(func() {
 // the stream muxer used for tests using the single stream connection
 var streamMuxer = yamux.DefaultTransport
 
-type transportType uint8
-
-const (
-	duplexTransport transportType = 1 + iota
-	multiplexTransport
-)
-
-var transportTypes = []transportType{duplexTransport}
-
-func (t transportType) String() string {
-	if t == duplexTransport {
-		return "duplex transport"
-	}
-	return "multiplex transport"
-}
-
 // dialRawConn dials a tpt.Conn
 // but it stops there. It doesn't do protocol selection and handshake
 func dialRawConn(laddr, raddr ma.Multiaddr) tpt.Conn {
-	var d tpt.Dialer
-	if mafmt.QUIC.Matches(laddr) {
-		var err error
-		d, err = quict.NewQuicTransport().Dialer(laddr)
-		Expect(err).ToNot(HaveOccurred())
-	} else {
-		var err error
-		d, err = tcpt.NewTCPTransport().Dialer(laddr)
-		Expect(err).ToNot(HaveOccurred())
-	}
+	d, err := tcpt.NewTCPTransport().Dialer(laddr)
+	Expect(err).ToNot(HaveOccurred())
 	c, err := d.Dial(raddr)
 	Expect(err).ToNot(HaveOccurred())
 	return c
@@ -76,9 +50,6 @@ func dialRawConn(laddr, raddr ma.Multiaddr) tpt.Conn {
 
 // getTransport gets the right transport for a multiaddr
 func getTransport(a ma.Multiaddr) tpt.Transport {
-	if mafmt.QUIC.Matches(a) {
-		return quict.NewQuicTransport()
-	}
 	return tcpt.NewTCPTransport()
 }
 
@@ -104,12 +75,8 @@ func getDialer(localPeer peer.ID, privKey ci.PrivKey, addr ma.Multiaddr) *Dialer
 
 // randPeerNetParams works like testutil.RandPeerNetParams
 // if called for a multi-stream transport, it replaces the address with a QUIC address
-func randPeerNetParams(tr transportType) *tu.PeerNetParams {
+func randPeerNetParams() *tu.PeerNetParams {
 	p, err := tu.RandPeerNetParams()
 	Expect(err).ToNot(HaveOccurred())
-	if tr == multiplexTransport {
-		p.Addr, err = ma.NewMultiaddr("/ip4/127.0.0.1/udp/0/quic")
-		Expect(err).ToNot(HaveOccurred())
-	}
 	return p
 }

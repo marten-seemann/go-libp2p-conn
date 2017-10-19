@@ -38,43 +38,39 @@ func newSingleConn(ctx context.Context, local, remote peer.ID, privKey ci.PrivKe
 
 	var streamConn smux.Conn
 	var secSession secio.Session
-	switch conn := tptConn.(type) {
-	case tpt.DuplexConn:
-		c := conn
-		// 1. secure the connection
-		if privKey != nil && iconn.EncryptConnections {
-			var err error
-			secSession, err = setupSecureSession(ctx, local, privKey, conn)
-			if err != nil {
-				return nil, err
-			}
-			c = &secureDuplexConn{
-				insecure: conn,
-				secure:   secSession,
-			}
-		} else {
-			log.Warning("creating INSECURE connection %s at %s", tptConn.LocalMultiaddr(), tptConn.RemoteMultiaddr())
-		}
 
-		// 2. start stream multipling
+	c := tptConn
+	// 1. secure the connection
+	if privKey != nil && iconn.EncryptConnections {
 		var err error
-		streamConn, err = pstpt.NewConn(c, isServer)
+		secSession, err = setupSecureSession(ctx, local, privKey, tptConn)
 		if err != nil {
 			return nil, err
 		}
-	case tpt.MultiplexConn:
-		panic("not implemented yet")
+		c = &secureConn{
+			insecure: tptConn,
+			secure:   secSession,
+		}
+	} else {
+		log.Warning("creating INSECURE connection %s at %s", tptConn.LocalMultiaddr(), tptConn.RemoteMultiaddr())
 	}
 
-	conn := &singleConn{
+	// 2. start stream multipling
+	var err error
+	streamConn, err = pstpt.NewConn(c, isServer)
+	if err != nil {
+		return nil, err
+	}
+
+	sconn := &singleConn{
 		streamConn: streamConn,
 		tptConn:    tptConn,
 		secSession: secSession,
 		event:      log.EventBegin(ctx, "connLifetime", ml),
 	}
 
-	log.Debugf("newSingleConn %p: %v to %v", conn, local, remote)
-	return conn, nil
+	log.Debugf("newSingleConn %p: %v to %v", sconn, local, remote)
+	return sconn, nil
 }
 
 func setupSecureSession(ctx context.Context, local peer.ID, privKey ci.PrivKey, ch io.ReadWriteCloser) (secio.Session, error) {
@@ -88,20 +84,7 @@ func setupSecureSession(ctx context.Context, local peer.ID, privKey ci.PrivKey, 
 		LocalID:    local,
 		PrivateKey: privKey,
 	}
-	secSession, err := sessgen.NewSession(ctx, ch)
-	if err != nil {
-		return nil, err
-	}
-	// force the handshake right now
-	// TODO: find a better solution for this
-	b := []byte("handshake")
-	if _, err := secSession.ReadWriter().Write(b); err != nil {
-		return nil, err
-	}
-	if _, err := io.ReadFull(secSession.ReadWriter(), b); err != nil {
-		return nil, err
-	}
-	return secSession, nil
+	return sessgen.NewSession(ctx, ch)
 }
 
 // close is the internal close function, called by ContextCloser.Close

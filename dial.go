@@ -3,7 +3,6 @@ package conn
 import (
 	"context"
 	"fmt"
-	"io"
 	"strings"
 	"time"
 
@@ -133,20 +132,7 @@ func (d *Dialer) doDial(ctx context.Context, raddr ma.Multiaddr, remote peer.ID)
 			cryptoProtoChoice = NoEncryptionTag
 		}
 
-		var stream io.ReadWriteCloser
-		switch con := rawConn.(type) {
-		case tpt.DuplexConn:
-			stream = con
-		case tpt.MultiplexConn:
-			stream, err = con.OpenStream()
-			if err != nil {
-				done <- connOrErr{err: err}
-				return
-			}
-			defer stream.Close()
-		}
-
-		if err := msmux.SelectProtoOrFail(cryptoProtoChoice, stream); err != nil {
+		if err := msmux.SelectProtoOrFail(cryptoProtoChoice, rawConn); err != nil {
 			done <- connOrErr{err: err}
 			return
 		}

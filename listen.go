@@ -181,21 +181,7 @@ func (l *listener) handleIncoming() {
 					conn = l.wrapper(conn)
 				}
 
-				var stream io.ReadWriteCloser
-				switch conn := conn.(type) {
-				case tpt.DuplexConn:
-					stream = conn
-				case tpt.MultiplexConn:
-					stream, err = conn.AcceptStream()
-					if err != nil {
-						conn.Close()
-						log.Warning("accepting stream failed: ", err)
-						return
-					}
-					defer stream.Close()
-				}
-
-				if _, _, err := l.mux.Negotiate(stream); err != nil {
+				if _, _, err := l.mux.Negotiate(conn); err != nil {
 					log.Warning("incoming conn: negotiation of crypto protocol failed: ", err)
 					conn.Close()
 					return

@@ -9,54 +9,54 @@ import (
 	ma "github.com/multiformats/go-multiaddr"
 )
 
-// secureDuplexConn wraps another DuplexConn object with an encrypted channel.
-type secureDuplexConn struct {
-	insecure tpt.DuplexConn // the wrapped conn
-	secure   secio.Session  // secure Session
+// secureConn wraps another Conn object with an encrypted channel.
+type secureConn struct {
+	insecure tpt.Conn      // the wrapped conn
+	secure   secio.Session // secure Session
 }
 
-var _ tpt.DuplexConn = &secureDuplexConn{}
+var _ tpt.Conn = &secureConn{}
 
-func (c *secureDuplexConn) Read(buf []byte) (int, error) {
+func (c *secureConn) Read(buf []byte) (int, error) {
 	return c.secure.ReadWriter().Read(buf)
 }
 
-func (c *secureDuplexConn) Write(buf []byte) (int, error) {
+func (c *secureConn) Write(buf []byte) (int, error) {
 	return c.secure.ReadWriter().Write(buf)
 }
 
-func (c *secureDuplexConn) Close() error {
+func (c *secureConn) Close() error {
 	return c.secure.Close()
 }
 
-func (c *secureDuplexConn) LocalAddr() net.Addr {
+func (c *secureConn) LocalAddr() net.Addr {
 	return c.insecure.LocalAddr()
 }
 
-func (c *secureDuplexConn) LocalMultiaddr() ma.Multiaddr {
+func (c *secureConn) LocalMultiaddr() ma.Multiaddr {
 	return c.insecure.LocalMultiaddr()
 }
 
-func (c *secureDuplexConn) RemoteAddr() net.Addr {
+func (c *secureConn) RemoteAddr() net.Addr {
 	return c.insecure.RemoteAddr()
 }
 
-func (c *secureDuplexConn) RemoteMultiaddr() ma.Multiaddr {
+func (c *secureConn) RemoteMultiaddr() ma.Multiaddr {
 	return c.insecure.RemoteMultiaddr()
 }
 
-func (c *secureDuplexConn) SetDeadline(t time.Time) error {
+func (c *secureConn) SetDeadline(t time.Time) error {
 	return c.insecure.SetDeadline(t)
 }
 
-func (c *secureDuplexConn) SetReadDeadline(t time.Time) error {
+func (c *secureConn) SetReadDeadline(t time.Time) error {
 	return c.insecure.SetDeadline(t)
 }
 
-func (c *secureDuplexConn) SetWriteDeadline(t time.Time) error {
+func (c *secureConn) SetWriteDeadline(t time.Time) error {
 	return c.insecure.SetDeadline(t)
 }
 
-func (c *secureDuplexConn) Transport() tpt.Transport {
+func (c *secureConn) Transport() tpt.Transport {
 	return c.insecure.Transport()
 }
