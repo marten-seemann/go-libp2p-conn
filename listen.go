@@ -2,7 +2,6 @@ package conn
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -91,13 +90,11 @@ func (l *listener) Accept() (iconn.Conn, error) {
 		log.Warningf("listener %s listening INSECURELY!", l)
 	}
 
-	for c := range l.incoming {
-		if c.err != nil {
-			return nil, c.err
-		}
-		return c.conn, nil
+	c, ok := <-l.incoming
+	if !ok {
+		return nil, fmt.Errorf("listener is closed")
 	}
-	return nil, errors.New("listener is closed")
+	return c.conn, c.err
 }
 
 func (l *listener) Addr() net.Addr {
