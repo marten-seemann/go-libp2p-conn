@@ -160,6 +160,7 @@ func (l *listener) handleIncoming() {
 			defer cancel()
 
 			done := make(chan struct{})
+			var singleConn iconn.Conn
 			go func() {
 				defer close(done)
 
@@ -184,22 +185,21 @@ func (l *listener) handleIncoming() {
 					return
 				}
 
-				c, err := newSingleConn(ctx, l.local, "", l.privk, conn, l.streamMuxer, true)
+				singleConn, err = newSingleConn(ctx, l.local, "", l.privk, conn, l.streamMuxer, true)
 				if err != nil {
 					log.Warning("connection setup failed: ", err)
 					conn.Close()
-					return
 				}
-
-				l.incoming <- connOrErr{conn: c}
 			}()
 
 			select {
 			case <-ctx.Done():
 				log.Warning("incoming conn: conn not established in time:", ctx.Err().Error())
 				conn.Close()
-				return
 			case <-done: // connection completed (or errored)
+				if singleConn != nil {
+					l.incoming <- connOrErr{conn: singleConn}
+				}
 			}
 		}()
 	}
